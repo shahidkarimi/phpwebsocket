@@ -54,6 +54,7 @@ class WebSocket{
     $this->say("> ".$msg);
     $msg = $this->wrap($msg);
     socket_write($client,$msg,strlen($msg));
+    $this->say("! ".strlen($msg));
   } 
 
   function connect($socket){
@@ -63,6 +64,7 @@ class WebSocket{
     array_push($this->users,$user);
     array_push($this->sockets,$socket);
     $this->log($socket." CONNECTED!");
+    $this->log(date("d/n/Y ")."at ".date("H:i:s T"));
   }
 
   function disconnect($socket){
@@ -81,27 +83,59 @@ class WebSocket{
   function dohandshake($user,$buffer){
     $this->log("\nRequesting handshake...");
     $this->log($buffer);
-    list($resource,$host,$origin) = $this->getheaders($buffer);
+    list($resource,$host,$origin,$key1,$key2,$l8b) = $this->getheaders($buffer);
     $this->log("Handshaking...");
-    $upgrade  = "HTTP/1.1 101 Web Socket Protocol Handshake\r\n" .
+    //$port = explode(":",$host);
+    //$port = $port[1];
+    //$this->log($origin."\r\n".$host);
+    $upgrade  = "HTTP/1.1 101 WebSocket Protocol Handshake\r\n" .
                 "Upgrade: WebSocket\r\n" .
                 "Connection: Upgrade\r\n" .
-                "WebSocket-Origin: " . $origin . "\r\n" .
-                "WebSocket-Location: ws://" . $host . $resource . "\r\n" .
-                "\r\n";
+                                //"WebSocket-Origin: " . $origin . "\r\n" .
+                                //"WebSocket-Location: ws://" . $host . $resource . "\r\n" .
+                "Sec-WebSocket-Origin: " . $origin . "\r\n" .
+                    "Sec-WebSocket-Location: ws://" . $host . $resource . "\r\n" .
+                    //"Sec-WebSocket-Protocol: icbmgame\r\n" . //Client doesn't send this
+                "\r\n" .
+                    $this->calcKey($key1,$key2,$l8b) . "\r\n";// .
+                        //"\r\n";
     socket_write($user->socket,$upgrade.chr(0),strlen($upgrade.chr(0)));
     $user->handshake=true;
     $this->log($upgrade);
     $this->log("Done handshaking...");
     return true;
   }
-
+  
+  function calcKey($key1,$key2,$l8b){
+        //Get the numbers
+        preg_match_all('/([\d]+)/', $key1, $key1_num);
+        preg_match_all('/([\d]+)/', $key2, $key2_num);
+        //Number crunching [/bad pun]
+        $this->log("Key1: " . $key1_num = implode($key1_num[0]) );
+        $this->log("Key2: " . $key2_num = implode($key2_num[0]) );
+        //Count spaces
+        preg_match_all('/([ ]+)/', $key1, $key1_spc);
+        preg_match_all('/([ ]+)/', $key2, $key2_spc);
+        //How many spaces did it find?
+        $this->log("Key1 Spaces: " . $key1_spc = strlen(implode($key1_spc[0])) );
+        $this->log("Key2 Spaces: " . $key2_spc = strlen(implode($key2_spc[0])) );
+        if($key1_spc==0|$key2_spc==0){ $this->log("Invalid key");return; }
+        //Some math
+        $key1_sec = pack("N",$key1_num / $key1_spc); //Get the 32bit secret key, minus the other thing
+        $key2_sec = pack("N",$key2_num / $key2_spc);
+        //This needs checking, I'm not completely sure it should be a binary string
+        return md5($key1_sec.$key2_sec.$l8b,1); //The result, I think
+  }
+  
   function getheaders($req){
     $r=$h=$o=null;
-    if(preg_match("/GET (.*) HTTP/"   ,$req,$match)){ $r=$match[1]; }
-    if(preg_match("/Host: (.*)\r\n/"  ,$req,$match)){ $h=$match[1]; }
-    if(preg_match("/Origin: (.*)\r\n/",$req,$match)){ $o=$match[1]; }
-    return array($r,$h,$o);
+    if(preg_match("/GET (.*) HTTP/"               ,$req,$match)){ $r=$match[1]; }
+    if(preg_match("/Host: (.*)\r\n/"              ,$req,$match)){ $h=$match[1]; }
+    if(preg_match("/Origin: (.*)\r\n/"            ,$req,$match)){ $o=$match[1]; }
+    if(preg_match("/Sec-WebSocket-Key1: (.*)\r\n/",$req,$match)){ $this->log("Sec Key1: ".$sk1=$match[1]); }
+    if(preg_match("/Sec-WebSocket-Key2: (.*)\r\n/",$req,$match)){ $this->log("Sec Key2: ".$sk2=$match[1]); }
+    if($match=substr($req,-8))                                                                  { $this->log("Last 8 bytes: ".$l8b=$match); }
+    return array($r,$h,$o,$sk1,$sk2,$l8b);
   }
 
   function getuserbysocket($socket){
